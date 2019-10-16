@@ -63,6 +63,7 @@
 # works its magic. If you wish to manually deploy you can do so by piping, on
 # stdin, the same data that is fed to any git pre-receive hook.
 #
+# the script also accept an overriding argument URI to relace deploy.$FOO.uri
 
 ## Todo
 #
@@ -89,13 +90,31 @@ TMP="/tmp"
 # Repo directory
 export GIT_DIR=$(pwd)
 
+URI=""
+if [[ $# -ge 1 && -n $1 ]] ; then
+  URI=$1
+  echo "URI forced: $URI"
+fi
 
 ##
 ## Variables
 ##
 
+LOGFILE=/home/preprod/deploy.log
 
+##
+## functions
+##
 
+log() {
+    if [[ $1 == '-e' ]] ; then
+        shift
+        echo "$*"
+    fi
+    if [[ -n $LOGFILE ]] ; then
+        echo "$(date "+%Y-%m-%d_%H:%M:%S") $*" >> $LOGFILE
+    fi
+}
 
 ##
 ## Sanity checks
@@ -143,6 +162,7 @@ fi
 # Loop through stdin
 while read old new ref
 do
+  log "$old $new $ref"
   # Find branch name
   branch=${ref#"refs/heads/"}
   
@@ -162,10 +182,15 @@ do
   fi
   
   ## Attempt to update
-  echo "Branch ${branch} updated. Deploying..."
+  echo "Branch ${branch} updated. Deploying ref: '$new' ..."
   
   # Deploy destination
-  dest=$(git config --get "deploy.${branch}.uri")
+  if [[ -n $URI ]] ; then
+    dest=$URI
+  else
+    dest=$(git config --get "deploy.${branch}.uri")
+  fi
+
   if [ -z "${dest}" ]
   then
     echo "Error: Destination not set! Deploy failed."
@@ -208,6 +233,7 @@ do
   fi
   
   # Copy worktree to destination
+  log -e "$RSYNC $opts \"${scratch}/${branch}/\" \"${dest}\""
   $RSYNC $opts "${scratch}/${branch}/" "${dest}"
   status=$?
   
@@ -226,7 +252,7 @@ done
 ##
 
 # Remove scratch dir
-rm ${scratch} -rf
+rm -rf "${scratch}"
 
 # Unset environment variables
 unset GIT RSYNC TMP GIT_DIR scratch old new ref branch dest optstimestamps file
