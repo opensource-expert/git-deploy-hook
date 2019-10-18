@@ -63,7 +63,7 @@
 # works its magic. If you wish to manually deploy you can do so by piping, on
 # stdin, the same data that is fed to any git pre-receive hook.
 #
-# the script also accept an overriding argument URI to relace deploy.$FOO.uri
+# The script also accepts an overriding argument URI to replace deploy.$FOO.uri
 
 ## Todo
 #
@@ -73,6 +73,26 @@
 # 2) Improve documentation wording - find an English teacher to run it by or
 # something.
 #
+
+##
+## functions
+##
+
+log() {
+    if [[ $# -gt 1 && $1 == '-e' ]] ; then
+        shift
+        echo "$*"
+    fi
+    if [[ -n $LOGFILE ]] ; then
+        echo "$(date "+%Y-%m-%d_%H:%M:%S") $*" >> $LOGFILE
+    fi
+}
+
+do_rsync() {
+  log -e "$RSYNC $*"
+  # we need an eval here because our args come from a complex string
+  eval $RSYNC "$*"
+}
 
 ##
 ## Constants
@@ -89,32 +109,17 @@ TMP="/tmp"
 
 # Repo directory
 export GIT_DIR=$(pwd)
+log "cwd: $PWD"
 
-URI=""
-if [[ $# -ge 1 && -n $1 ]] ; then
-  URI=$1
-  echo "URI forced: $URI"
-fi
+# environment override value from exported ENV
+URI="${RSYNC_URI:-}"
+RSYNC_OPTS="${RSYNC_OPTS:-}"
 
 ##
 ## Variables
 ##
 
 LOGFILE=/home/preprod/deploy.log
-
-##
-## functions
-##
-
-log() {
-    if [[ $1 == '-e' ]] ; then
-        shift
-        echo "$*"
-    fi
-    if [[ -n $LOGFILE ]] ; then
-        echo "$(date "+%Y-%m-%d_%H:%M:%S") $*" >> $LOGFILE
-    fi
-}
 
 ##
 ## Sanity checks
@@ -156,7 +161,7 @@ then
 else
   # Error && exit
   echo "Error: unable to create scratch dir or already exists."
-  exit
+  exit 1
 fi
 
 # Loop through stdin
@@ -186,6 +191,7 @@ do
   
   # Deploy destination
   if [[ -n $URI ]] ; then
+    echo "URI forced: $URI"
     dest=$URI
   else
     dest=$(git config --get "deploy.${branch}.uri")
@@ -199,7 +205,12 @@ do
   echo "Destination: "${dest}
   
   # Rsync options
-  opts=$(git config --get "deploy.${branch}.opts")
+  if [[ -n $RSYNC_OPTS ]] ; then
+    echo "RSYNC_OPTS forced: $RSYNC_OPTS"
+    opts="$RSYNC_OPTS"
+  else
+    opts=$(git config --get "deploy.${branch}.opts")
+  fi
   if [ -z "${opts}" ]
   then
     opts="-rt --delete"
@@ -233,8 +244,7 @@ do
   fi
   
   # Copy worktree to destination
-  log -e "$RSYNC $opts \"${scratch}/${branch}/\" \"${dest}\""
-  $RSYNC $opts "${scratch}/${branch}/" "${dest}"
+  do_rsync "$opts" "${scratch}/${branch}/" "${dest}"
   status=$?
   
   if [ "${status}" -ne "0" ]
@@ -252,7 +262,7 @@ done
 ##
 
 # Remove scratch dir
-rm -rf "${scratch}"
+#rm -rf "${scratch}"
 
 # Unset environment variables
 unset GIT RSYNC TMP GIT_DIR scratch old new ref branch dest optstimestamps file
