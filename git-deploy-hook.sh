@@ -1,13 +1,17 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
-# git-deploy
+# git-deploy-hook.sh
 #
-# git post-receive hook to check out branches to a rsync destination
+# git post-receive hook to check out branches to a rsync destination.
 #
 # Copyright 2012 K and H Research Company.
-# License: WTFPL, any version or GNU General Public License, version 2+
-# Author: Eugene E. Kashpureff Jr
+# License: GNU General Public License, version 3+
+# Original Author: Eugene E. Kashpureff Jr
+# Author:          Sylvain Viart 2019
 #
+
+# bash strict mode
+set -euo pipefail
 
 ##
 ## Documentation
@@ -49,7 +53,7 @@
 # is checked-out. If true git-log is used to find the last commit which
 # affected each path in the worktre, and then 'touch -m' is used to set
 # the modification time to this date.
-# 
+#
 # deploy.$FOO.uri
 # rsync URI which should be deployed to for branch $FOO. This can be any
 # scheme which is known to 'rsync', including a local filesystem path, or
@@ -88,10 +92,39 @@ log() {
     fi
 }
 
+# a rsync wrapper:
+# Usage: do_rsync VAR_NAME_STATUS "$RSYNC_RSH" "$opts" "$SRC" "$DEST"
 do_rsync() {
-  log -e "$RSYNC $*"
-  # we need an eval here because our args come from a complex string
-  eval $RSYNC "$*"
+  local var_name_status=$1
+  log "do_rsync: $RSYNC $*"
+  RSYNC_RSH=$2
+  export RSYNC_RSH
+  log "do_rsync: RSYNC_RSH='$RSYNC_RSH'"
+  opts_list=( $3 )
+  local res
+  # catching exit code
+  set +e
+  $RSYNC "${opts_list[@]}" "$4" "$5"
+  res=$?
+  set -e
+  # print inside the var
+  printf -v $var_name_status "$res"
+}
+
+# wrapper to get ENV Var or git_key from git config
+get_git_config() {
+  local env_var=$1
+  local git_key=$2
+  local value
+  # read the given variable name value in a local var
+  eval "value=\$$env_var"
+  if [[ -n $value ]] ; then
+    >&2 echo "$env_var forced over $git_key: '$value'"
+    echo "$value"
+  else
+    # empty value is OK for strict mode
+    git config --get "$git_key" || true
+  fi
 }
 
 ##
@@ -107,6 +140,9 @@ RSYNC=$(which rsync)
 # Temporary directory
 TMP="/tmp"
 
+# path to a writable log file (empty for no logging)
+LOGFILE=/home/preprod/deploy.log
+
 # Repo directory
 export GIT_DIR=$(pwd)
 log "cwd: $PWD"
@@ -119,7 +155,6 @@ RSYNC_OPTS="${RSYNC_OPTS:-}"
 ## Variables
 ##
 
-LOGFILE=/home/preprod/deploy.log
 
 ##
 ## Sanity checks
@@ -164,20 +199,23 @@ else
   exit 1
 fi
 
-# Loop through stdin
+# an array for collecting loop rsync resturned values
+declare -a ret_status
+
+# Loop through stdin (multiple branch could be involved if git push --all)
 while read old new ref
 do
-  log "$old $new $ref"
+  log "progessing: $old $new $ref"
   # Find branch name
   branch=${ref#"refs/heads/"}
-  
+
   # Check branch name
   if [ -z "${branch}" ]
   then
     echo "Refspec ${ref} is not a branch. Skipped!"
     continue
   fi
-  
+
   # Don't attempt to handle deleted branches
   if [ "${new}" = "0000000000000000000000000000000000000000" ]
   then
@@ -185,56 +223,48 @@ do
     echo "Branch ${branch} deleted. Skipped!"
     continue
   fi
-  
+
   ## Attempt to update
   echo "Branch ${branch} updated. Deploying ref: '$new' ..."
-  
-  # Deploy destination
-  if [[ -n $URI ]] ; then
-    echo "URI forced: $URI"
-    dest=$URI
-  else
-    dest=$(git config --get "deploy.${branch}.uri")
-  fi
 
+  # Deploy destination (if the URI is forced deploy always happen)
+  # You cant test this failure from wrapper.
+  dest=$(get_git_config URI "deploy.${branch}.uri")
   if [ -z "${dest}" ]
   then
     echo "Error: Destination not set! Deploy failed."
+    ret_status+=( 1 )
     continue
   fi
   echo "Destination: "${dest}
-  
+
   # Rsync options
-  if [[ -n $RSYNC_OPTS ]] ; then
-    echo "RSYNC_OPTS forced: $RSYNC_OPTS"
-    opts="$RSYNC_OPTS"
-  else
-    opts=$(git config --get "deploy.${branch}.opts")
-  fi
+  opts=$(get_git_config RSYNC_OPTS "deploy.${branch}.opts")
+  RSYNC_RSH=$(get_git_config RSYNC_RSH "deploy.${branch}.rsync_rsh")
   if [ -z "${opts}" ]
   then
     opts="-rt --delete"
   fi
-  echo "Options: "${opts}
-  
+  echo "Options: ${opts} +RSYNC_RSH: '$RSYNC_RSH'"
+
   # Create directory to archive into
   mkdir "${scratch}/${branch}"
-  
+
   # Drop into scratchdir
   cd "${scratch}/${branch}"
-  
+
   # Set umask
   umask 007
-  
-  # Get a copy of worktree
+
+  # Get a copy of worktree in our scratchdir
   $GIT archive --format=tar ${new} | tar xf -
-  
+
   # Alter modification times?
-  timestamps=$(git config --bool --get "deploy.${branch}.timestamps") 
+  timestamps=$(git config --bool --get "deploy.${branch}.timestamps" || true)
   if [ "${timestamps}" == "true" ]
   then
     # Set modification times to last-changed
-    for file in $(find ./ -type f) 
+    for file in $(find ./ -type f)
     do
       # Get the date of the last commit
       last=$(git log ${branch} --pretty=format:%ad --date=rfc -1 -- ${file})
@@ -242,14 +272,16 @@ do
       touch -t $(date -d "${last}" +%Y%m%d%H%M.%S) ${file}
     done
   fi
-  
+
   # Copy worktree to destination
-  do_rsync "$opts" "${scratch}/${branch}/" "${dest}"
-  status=$?
-  
+  # status will be filled by do_rsync
+  status=0
+  do_rsync status "$RSYNC_RSH" "$opts" "${scratch}/${branch}/" "${dest}"
+
   if [ "${status}" -ne "0" ]
   then
     echo "Error: rsync exited with exit code ${status}. Deploy may not have been successful. Please review the error log above."
+    ret_status+=( $status )
   else
     echo "Deploy successful!"
   fi
@@ -266,4 +298,12 @@ done
 
 # Unset environment variables
 unset GIT RSYNC TMP GIT_DIR scratch old new ref branch dest optstimestamps file
-unset last
+unset last RSYNC_RSH RSYNC_URI RSYNC_OPTS
+
+# compute return value form ret_status array
+res=0
+for v in ${ret_status[@]}
+do
+  res=$(($res + $v))
+done
+exit $res
