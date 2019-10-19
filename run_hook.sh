@@ -5,31 +5,39 @@
 # Usage: 
 #  ./run_hook.sh BARE_REPOS BRANCH REV RSYNC_URI [RSYNC_OPTS] 
 
+# Bash strict mode
 set -euo pipefail
 
-HOOK_SCRIPT=$(dirname $(readlink -f $0))/git-deploy-hook.sh
+LOCAL_HOOK_SCRIPT=$(dirname $(readlink -f $0))/git-deploy-hook.sh
 GIT_USER=git
+
+# Arguments
+HOOK_SCRIPT=$1
+if [[ -z $HOOK_SCRIPT ]] ; then
+  HOOK_SCRIPT=$LOCAL_HOOK_SCRIPT
+fi
+BARE_REPOS=$2
+BRANCH=$3
+REV=$4
+RSYNC_URI=$5
+RSYNC_OPTS=""
+if [[ $# -ge 6 && -n $6 ]] ; then
+  RSYNC_OPTS="$6"
+fi
+
+# Checks
 
 if [[ ! -x $HOOK_SCRIPT ]] ; then
   echo "$0:failure: HOOK_SCRIPT '$HOOK_SCRIPT' not found or not executable"
   exit 1
 fi
 
-# Arguments
-BARE_REPOS=$1
-BRANCH=$2
-REV=$3
-RSYNC_URI=$4
-RSYNC_OPTS=""
-if [[ $# -ge 5 && -n $5 ]] ; then
-  RSYNC_OPTS="$5"
-fi
-
 if [[ ! -d $BARE_REPOS ]] ; then
-  echo "$0:failure: not a directory '$BARE_REPOS'"
+  echo "$0:failure: BARE_REPOS not a directory: '$BARE_REPOS'"
   exit 1
 fi
 
+# RUN
 # catch exit code, so strict mode disabled
 set +e
 # export env var for the script in th GIT_USER environment

@@ -243,7 +243,7 @@ do
   RSYNC_RSH=$(get_git_config RSYNC_RSH "deploy.${branch}.rsync_rsh")
   if [ -z "${opts}" ]
   then
-    opts="-rt --delete"
+    opts="-rt --delete --itemize-changes"
   fi
   echo "Options: ${opts} +RSYNC_RSH: '$RSYNC_RSH'"
 
