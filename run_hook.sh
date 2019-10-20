@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 #
 # A command line wrapper to run the git hook directly
-#  
-# Usage: 
-#  ./run_hook.sh BARE_REPOS BRANCH REV RSYNC_URI [RSYNC_OPTS] 
+#
+# Usage:
+#  ./run_hook.sh HOOK_SCRIPT BARE_REPOS BRANCH REV RSYNC_URI [RSYNC_OPTS]
+#
+# HOOK_SCRIPT can be empty
+# if the BARE_REPOS has some config enabled
+#   RSYNC_URI can be empty
+#
+# See BARE_REPOS config: (cd $BARE_REPOS && git config -l)
 
 # Bash strict mode
 set -euo pipefail
@@ -24,6 +30,8 @@ RSYNC_OPTS=""
 if [[ $# -ge 6 && -n $6 ]] ; then
   RSYNC_OPTS="$6"
 fi
+# default empty var
+RSYNC_RSH=${RSYNC_RSH:-}
 
 # Checks
 

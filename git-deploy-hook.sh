@@ -96,7 +96,7 @@ log() {
 # Usage: do_rsync VAR_NAME_STATUS "$RSYNC_RSH" "$opts" "$SRC" "$DEST"
 do_rsync() {
   local var_name_status=$1
-  log "do_rsync: $RSYNC $*"
+  log "do_rsync: all args '$RSYNC' '$@'"
   RSYNC_RSH=$2
   export RSYNC_RSH
   log "do_rsync: RSYNC_RSH='$RSYNC_RSH'"
@@ -104,7 +104,8 @@ do_rsync() {
   local res
   # catching exit code
   set +e
-  $RSYNC "${opts_list[@]}" "$4" "$5"
+  log "timeout 10s $RSYNC \"${opts_list[@]}\" \"$4\" \"$5\""
+  timeout 10s $RSYNC "${opts_list[@]}" "$4" "$5"
   res=$?
   set -e
   # print inside the var
@@ -115,9 +116,11 @@ do_rsync() {
 get_git_config() {
   local env_var=$1
   local git_key=$2
-  local value
-  # read the given variable name value in a local var
-  eval "value=\$$env_var"
+  local value=''
+  if [[ -n $env_var ]] ; then
+    # read the given variable name value in a local var
+    eval "value=\$$env_var"
+  fi
   if [[ -n $value ]] ; then
     >&2 echo "$env_var forced over $git_key: '$value'"
     echo "$value"
@@ -150,6 +153,7 @@ log "cwd: $PWD"
 # environment override value from exported ENV
 URI="${RSYNC_URI:-}"
 RSYNC_OPTS="${RSYNC_OPTS:-}"
+RSYNC_RSH="/usr/bin/ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
 ##
 ## Variables
@@ -225,7 +229,12 @@ do
   fi
 
   ## Attempt to update
-  echo "Branch ${branch} updated. Deploying ref: '$new' ..."
+  echo "Branch ${branch} updated. Deploy hook on ref: '$new' ..."
+  do_deploy=$(git config --get "deploy.${branch}.deployenable" || true)
+  if [[ $do_deploy != 'true' ]] ; then
+    echo "no deployEnable for this repos"
+    continue
+  fi
 
   # Deploy destination (if the URI is forced deploy always happen)
   # You cant test this failure from wrapper.
@@ -240,10 +249,14 @@ do
 
   # Rsync options
   opts=$(get_git_config RSYNC_OPTS "deploy.${branch}.opts")
-  RSYNC_RSH=$(get_git_config RSYNC_RSH "deploy.${branch}.rsync_rsh")
   if [ -z "${opts}" ]
   then
     opts="-rt --delete --itemize-changes"
+  fi
+  # compose RSYNC_RSH with a deploy_key stored in ~git/.ssh
+  deploy_key=$(get_git_config "" "deploy.${branch}.deploykey")
+  if [[ -n $deploy_key ]] ; then
+    RSYNC_RSH="$RSYNC_RSH -i ~/.ssh/$deploy_key"
   fi
   echo "Options: ${opts} +RSYNC_RSH: '$RSYNC_RSH'"
 
