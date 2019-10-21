@@ -1,0 +1,42 @@
+---
+# repeatable task for editing gitolite-admin config with vim
+#
+# vars:
+#   repos_name: string to match in gitolite.conf
+#   edit_keys: dict { config_key name : value, ... }
+- block:
+  - name: copy vim scprit to gitolite-admin
+    copy:
+      src: files/gitolite_edit.vim
+      dest: "{{gitolite_repos}}"
+
+  - name: edit gitolite config for webapp
+    #   vim -u gitolite_edit.vim
+    #   -E  Extended ex mode
+    #   -n  no swap
+    #   -N  nocompatible
+    # timeout is used to kill vim if something fail
+    command: >
+        timeout 1s
+        vim -u gitolite_edit.vim -E -n -N
+        -c 'let r=GitoLiteUpdateRepos("{{repos_name}}", "{{config_key}}", "{{config_value}}")'
+        -c w
+        -c 'exe "silent !echo ".r'
+        -c q
+        conf/gitolite.conf
+    args:
+      chdir: "{{gitolite_repos}}"
+    vars:
+      # fetch loop value
+      config_key: "{{vim_item.key}}"
+      config_value: "{{vim_item.value}}"
+    register: edit_gitolite
+    changed_when: >
+      edit_gitolite.stdout == 'updated' or
+      edit_gitolite.stdout == 'inserted'
+    with_dict: "{{edit_keys}}"
+    loop_control:
+      loop_var: vim_item
+  tags: vim
+
+

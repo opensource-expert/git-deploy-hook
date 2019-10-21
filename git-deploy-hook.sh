@@ -104,7 +104,7 @@ do_rsync() {
   local res
   # catching exit code
   set +e
-  log "timeout 10s $RSYNC \"${opts_list[@]}\" \"$4\" \"$5\""
+  log "timeout 10s $RSYNC ${opts_list[@]} \"$4\" \"$5\""
   timeout 10s $RSYNC "${opts_list[@]}" "$4" "$5"
   res=$?
   set -e
@@ -232,7 +232,7 @@ do
   echo "Branch ${branch} updated. Deploy hook on ref: '$new' ..."
   do_deploy=$(git config --get "deploy.${branch}.deployenable" || true)
   if [[ $do_deploy != 'true' ]] ; then
-    echo "no deployEnable for this repos"
+    echo "no deployenable for this repos."
     continue
   fi
 
@@ -248,17 +248,17 @@ do
   echo "Destination: "${dest}
 
   # Rsync options
-  opts=$(get_git_config RSYNC_OPTS "deploy.${branch}.opts")
-  if [ -z "${opts}" ]
+  rsync_opts=$(get_git_config RSYNC_OPTS "deploy.${branch}.opts")
+  if [ -z "${rsync_opts}" ]
   then
-    opts="-rt --delete --info=NAME0,DEL1,COPY1,STATS0,FLIST0"
+    rsync_opts="-rt --delete --info=NAME0,DEL1,COPY1,STATS0,FLIST0"
   fi
   # compose RSYNC_RSH with a deploy_key stored in ~git/.ssh
   deploy_key=$(get_git_config "" "deploy.${branch}.deploykey")
   if [[ -n $deploy_key ]] ; then
     RSYNC_RSH="$RSYNC_RSH -i ~/.ssh/$deploy_key"
   fi
-  echo "Options: ${opts} +RSYNC_RSH: '$RSYNC_RSH'"
+  echo "Options: ${rsync_opts} +RSYNC_RSH: '$RSYNC_RSH'"
 
   # Create directory to archive into
   mkdir "${scratch}/${branch}"
@@ -289,7 +289,7 @@ do
   # Copy worktree to destination
   # status will be filled by do_rsync
   status=0
-  do_rsync status "$RSYNC_RSH" "$opts" "${scratch}/${branch}/" "${dest}"
+  do_rsync status "$RSYNC_RSH" "$rsync_opts" "${scratch}/${branch}/" "${dest}"
 
   if [ "${status}" -ne "0" ]
   then
@@ -309,8 +309,8 @@ done
 # Remove scratch dir
 rm -rf "${scratch}"
 
-# Unset environment variables
-unset GIT RSYNC TMP GIT_DIR scratch old new ref branch dest optstimestamps file
+# Unset environment variables, really needed?
+unset GIT RSYNC TMP GIT_DIR scratch old new ref branch dest opts timestamps file
 unset last RSYNC_RSH RSYNC_URI RSYNC_OPTS
 
 # compute return value form ret_status array

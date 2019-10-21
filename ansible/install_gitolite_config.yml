@@ -1,0 +1,146 @@
+---
+# vim: set et ts=2 sts=2 sw=2:
+#
+# deploy git commit hook deploy script and setup deploy keys
+#
+# Usage: [ -e "local_src=/path/to/script.sh" ]
+#
+# WARNING: this playbook is not tested verbatim
+#
+# requires:
+#  - gitolite installed and configured with ansible granted for gitolite-admin
+#  - vim
+
+- hosts: localhost
+  gather_facts: yes
+  vars:
+    git_repos: "git@github.com:opensource-expert/git-deploy-hook.git"
+    git_home: /var/lib/gitolite3
+    hook_install_dir: /var/lib/gitolite3/local/hooks/common/post-receive.d/
+    hook_clone_dir: /tmp/git-deploy-hook
+    hook_script: /tmp/git-deploy-hook/git-deploy-hook.sh
+    rsync_rsh_default: "/usr/bin/ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+    # will be filled by set_fact later
+    deploy_keys: []
+    gitolite_repos: /tmp/gitolite-admin
+
+    vhosts:
+      mywebapp:
+        home: /var/www/mywebapp
+        code: webapp
+        git: ssh://git@git.example.fr/mywebapp/webapp.git
+        # deploy_key must be generated first
+        deploy_key: /ansible/keys/my-deploy-key-app-prod
+        deploy_host: prod.mywebapp.example.fr
+
+  tasks:
+    - name: clone github repository git-deploy-hook
+      git:
+        repo: "{{git_repos}}"
+        dest: "{{hook_clone_dir}}"
+      tags: git
+
+    - name: check cmdline argument local_src supplied with -e
+      set_fact:
+        # local_src in an ansible command line exta parameter
+        hook_script: "{{local_src}}"
+      when: local_src is defined
+
+    - name: copy git-deploy-hook to gitolite hook dir
+      copy:
+        src: "{{hook_script}}"
+        dest: "{{hook_install_dir}}"
+        owner: git
+        group: gitolite3
+        mode: 0755
+
+    - name: ensure log file is writable by git
+      file:
+        path: /path/to/post-receive-hook/deploy.log
+        state: touch
+        modification_time: preserve
+        access_time: preserve
+        owner: git
+        group: gitolite3
+        mode: 0644
+
+    - name: prepare values for deploy_keys
+      set_fact:
+        deploy_keys: >
+          {{
+            deploy_keys + [
+              item.value.deploy_key,
+              item.value.deploy_key + '.pub'
+              ]
+          }}
+      with_dict: "{{vhosts}}"
+
+    - name: install deploy keys for git hook user
+      copy:
+        src: "{{item}}"
+        dest: "{{git_home}}/.ssh/{{item|basename}}"
+        owner: git
+        group: gitolite3
+        mode: 0600
+      loop: "{{deploy_keys}}"
+
+    # an admin key must be granted first in gitolite
+    - name: clone gitolite-admin repository
+      git:
+        repo: git@git.example.fr:gitolite-admin
+        dest: "{{gitolite_repos}}"
+        accept_hostkey: yes
+        key_file: "/ansible/keys/ansible-gitolite-admin"
+
+    - name: restrict premission of the cloned repos to root
+      file:
+        state: directory
+        path: "{{gitolite_repos}}"
+        mode: 0700
+
+    - name: edit gitolite-admin
+      include: tasks/vim_edit_gitolite-admin.yml
+      vars:
+        repos_name: "{{ item.value.git | urlsplit('path') | regex_replace('(^/|\\.git$)', '') }}"
+        deploy_host: "{{item.value.deploy_host}}"
+        # prepare loopable edition dict
+        # NOTE: git config keys cannot contains _ only isalpha
+        #       keys are converted to lowercase
+        edit_keys: >
+          {{
+            {
+              'deploy.prod.deployenable' : 'true' ,
+              'deploy.prod.deploykey'    : item.value.deploy_key|basename ,
+              'deploy.prod.uri'          : item.key +'@'+ item.value.deploy_host +':'+ item.value.home +'/'+ item.value.code +'/' ,
+            }
+          }}
+      with_dict: "{{vhosts}}"
+      tags: vim
+
+    - name: detect gitolite_admin changes
+      command: git status --short --untracked-files=no
+      args:
+        chdir: "{{gitolite_repos}}"
+      register: gitolite_admin_changes
+      changed_when: "gitolite_admin_changes.stdout is regex('^ M ')"
+      tags:
+        - gitolite_admin
+        - commit
+
+    #- debug:
+    #    var: gitolite_admin_changes
+    #  tags:
+    #    - gitolite_admin
+    #    - commit
+
+    - name: commit changed gitolite-admin
+      shell: >
+        git commit -m "ansible: altered deploy keys git config" conf/gitolite.conf &&
+        git push
+      args:
+        chdir: "{{gitolite_repos}}"
+      environment:
+        GIT_SSH_COMMAND: "ssh -o IdentitiesOnly=yes -i /ansible/keys/ansible-gitolite-admin"
+      when: gitolite_admin_changes.changed
+      tags: commit
