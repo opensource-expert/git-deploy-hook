@@ -251,7 +251,7 @@ do
   opts=$(get_git_config RSYNC_OPTS "deploy.${branch}.opts")
   if [ -z "${opts}" ]
   then
-    opts="-rt --delete --itemize-changes"
+    opts="-rt --delete --info=NAME1,DEL1,COPY1,STATS0,FLIST0"
   fi
   # compose RSYNC_RSH with a deploy_key stored in ~git/.ssh
   deploy_key=$(get_git_config "" "deploy.${branch}.deploykey")
